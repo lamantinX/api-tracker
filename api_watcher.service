@@ -1,0 +1,42 @@
+# Systemd service файл для API Watcher
+# Установка: sudo cp api_watcher.service /etc/systemd/system/
+# Активация: sudo systemctl enable api_watcher.service
+# Запуск: sudo systemctl start api_watcher.service
+
+[Unit]
+Description=API Watcher - мониторинг изменений API документации
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=api-watcher
+Group=api-watcher
+WorkingDirectory=/opt/api-watcher
+ExecStart=/opt/api-watcher/venv/bin/python /opt/api-watcher/api_watcher/main.py
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=api-watcher
+
+# Переменные окружения
+Environment=LOG_LEVEL=INFO
+Environment=API_WATCHER_SNAPSHOTS_DIR=/opt/api-watcher/snapshots
+Environment=API_WATCHER_URLS_FILE=/opt/api-watcher/urls.json
+
+# Безопасность
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/api-watcher/snapshots /opt/api-watcher/logs
+CapabilityBoundingSet=
+
+# Ресурсы
+MemoryMax=512M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

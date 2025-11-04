@@ -1,0 +1,25 @@
+# Пример crontab для API Watcher
+# Для установки: crontab api_watcher/crontab.example
+# Для просмотра: crontab -l
+# Для редактирования: crontab -e
+
+# Переменные окружения
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+MAILTO=""
+
+# Запуск API Watcher каждые 30 минут
+*/30 * * * * cd /path/to/api-watcher && ./api_watcher/monitor.sh run
+
+# Проверка здоровья каждые 5 минут
+*/5 * * * * cd /path/to/api-watcher && ./api_watcher/monitor.sh monitor
+
+# Очистка логов каждый день в 2:00
+0 2 * * * cd /path/to/api-watcher && ./api_watcher/monitor.sh cleanup
+
+# Примеры других расписаний:
+# Каждый час: 0 * * * *
+# Каждые 15 минут: */15 * * * *
+# Каждый день в 9:00: 0 9 * * *
+# Каждый понедельник в 9:00: 0 9 * * 1
+# Каждое 1 число месяца в 9:00: 0 9 1 * *

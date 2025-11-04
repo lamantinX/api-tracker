@@ -1,0 +1,12 @@
+{
+  "timestamp": "2025-11-04T14:39:26.120210",
+  "status": "healthy",
+  "details": {
+    "total_urls": 1,
+    "successful": 1,
+    "failed": 0,
+    "changes_detected": 0,
+    "processing_time": 18.57,
+    "last_run": "2025-11-04T14:39:26.120210"
+  }
+}

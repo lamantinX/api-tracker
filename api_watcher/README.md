@@ -13,6 +13,17 @@
 - 🔄 Детальное сравнение изменений через DeepDiff
 - 📢 Уведомления в консоль и Telegram
 
+### Production-Ready функции
+
+- ⚡ **Асинхронная обработка** - параллельная обработка множества URL
+- 🔄 **Автоматические повторы** - retry механизм с экспоненциальной задержкой
+- 📊 **Health Check** - мониторинг состояния приложения
+- 📝 **Структурированное логирование** - замена print на logging
+- 🏥 **HTTP Health Endpoint** - endpoint для мониторинга в оркестраторах
+- 📈 **Метрики производительности** - время обработки и статистика
+- 🛡️ **Graceful Shutdown** - корректное завершение работы
+- 📋 **Мониторинг скрипты** - готовые скрипты для cron и системного мониторинга
+
 ## Установка
 
 1. Клонируйте репозиторий или скопируйте файлы проекта
@@ -268,3 +279,266 @@ self.parsers['new_type'] = NewTypeParser()
 ## Лицензия
 
 MIT License
+
+## Production Deployment
+
+### Параметры командной строки
+
+```bash
+python main.py --help
+```
+
+Доступные опции:
+- `--max-retries N` - Максимальное количество повторных попыток (по умолчанию: 3)
+- `--retry-delay N` - Задержка между повторными попытками в секундах (по умолчанию: 1.0)
+- `--max-concurrent N` - Максимальное количество одновременных запросов (по умолчанию: 5)
+- `--health-check` - Показать текущее состояние здоровья и выйти
+
+### Health Check
+
+#### Проверка состояния приложения
+```bash
+# Проверка через CLI
+python health_check.py
+
+# Проверка с параметрами
+python health_check.py --max-age 120 --json
+
+# Тихая проверка (только код выхода)
+python health_check.py --quiet
+```
+
+#### HTTP Health Endpoint
+```bash
+# Запуск HTTP сервера для health checks
+python health_server.py --host 0.0.0.0 --port 8080
+
+# Проверка через curl
+curl http://localhost:8080/health
+
+# Проверка с параметрами
+curl "http://localhost:8080/health?max_age=120"
+```
+
+### Мониторинг и автоматизация
+
+#### Использование monitor.sh
+```bash
+# Проверка здоровья
+./monitor.sh monitor
+
+# Запуск API Watcher
+./monitor.sh run
+
+# Очистка старых логов
+./monitor.sh cleanup
+
+# Показать состояние здоровья
+./monitor.sh health
+```
+
+#### Настройка cron
+```bash
+# Копируем пример crontab
+cp crontab.example /tmp/api-watcher-cron
+
+# Редактируем пути
+sed -i 's|/path/to/api-watcher|'$(pwd)'|g' /tmp/api-watcher-cron
+
+# Устанавливаем crontab
+crontab /tmp/api-watcher-cron
+
+# Проверяем установку
+crontab -l
+```
+
+### Docker Deployment
+
+#### Сборка и запуск
+```bash
+# Сборка образа
+docker-compose build
+
+# Запуск с health checks
+docker-compose up -d
+
+# Проверка состояния
+docker-compose ps
+docker-compose logs api-watcher
+```
+
+#### Health Check в Docker
+```bash
+# Проверка health status контейнера
+docker inspect api-watcher --format='{{.State.Health.Status}}'
+
+# Просмотр health check логов
+docker inspect api-watcher --format='{{range .State.Health.Log}}{{.Output}}{{end}}'
+
+# HTTP health endpoint
+curl http://localhost:8080/health
+```
+
+### Kubernetes Deployment
+
+#### Пример манифеста
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-watcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-watcher
+  template:
+    metadata:
+      labels:
+        app: api-watcher
+    spec:
+      containers:
+      - name: api-watcher
+        image: api-watcher:latest
+        env:
+        - name: LOG_LEVEL
+          value: "INFO"
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - /app/api_watcher/health_check.py
+            - --quiet
+          initialDelaySeconds: 30
+          periodSeconds: 60
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - /app/api_watcher/health_check.py
+            - --quiet
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        volumeMounts:
+        - name: snapshots
+          mountPath: /app/snapshots
+        - name: config
+          mountPath: /app/urls.json
+          subPath: urls.json
+      volumes:
+      - name: snapshots
+        persistentVolumeClaim:
+          claimName: api-watcher-snapshots
+      - name: config
+        configMap:
+          name: api-watcher-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-watcher-health
+spec:
+  selector:
+    app: api-watcher-health
+  ports:
+  - port: 8080
+    targetPort: 8080
+```
+
+### Логирование
+
+#### Настройка уровня логирования
+```bash
+# Через переменную окружения
+export LOG_LEVEL=DEBUG
+python main.py
+
+# В Docker
+docker run -e LOG_LEVEL=WARNING api-watcher
+```
+
+#### Ротация логов
+```bash
+# Настройка logrotate
+sudo tee /etc/logrotate.d/api-watcher << EOF
+/path/to/api-watcher/logs/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 644 app app
+}
+EOF
+```
+
+### Мониторинг и алерты
+
+#### Prometheus метрики (будущая функция)
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'api-watcher'
+    static_configs:
+      - targets: ['localhost:8080']
+    metrics_path: '/metrics'
+```
+
+#### Grafana Dashboard (будущая функция)
+- Количество обработанных URL
+- Время выполнения
+- Количество обнаруженных изменений
+- Статус health checks
+
+### Безопасность
+
+#### Рекомендации
+- Используйте непривилегированного пользователя в контейнере
+- Ограничьте сетевой доступ только к необходимым ресурсам
+- Регулярно обновляйте зависимости
+- Используйте secrets для токенов Telegram
+
+#### Пример с Docker Secrets
+```yaml
+version: '3.8'
+services:
+  api-watcher:
+    image: api-watcher:latest
+    secrets:
+      - telegram_token
+    environment:
+      - TELEGRAM_BOT_TOKEN_FILE=/run/secrets/telegram_token
+
+secrets:
+  telegram_token:
+    file: ./secrets/telegram_token.txt
+```
+
+### Производительность
+
+#### Оптимизация параллелизма
+```bash
+# Для большого количества URL увеличьте параллелизм
+python main.py --max-concurrent 10
+
+# Для медленных API увеличьте количество повторов
+python main.py --max-retries 5 --retry-delay 2.0
+```
+
+#### Мониторинг ресурсов
+```bash
+# Мониторинг использования памяти и CPU
+docker stats api-watcher
+
+# Профилирование Python приложения
+python -m cProfile -o profile.stats main.py
+```
+
+### Коды выхода
+
+- `0` - Успешное выполнение (healthy)
+- `1` - Частичные ошибки (degraded/warning)
+- `2` - Критические ошибки (unhealthy/error)
+
+Эти коды можно использовать в скриптах мониторинга для принятия решений о необходимости вмешательства.

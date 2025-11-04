@@ -1,6 +1,11 @@
 # Используем официальный Python образ
 FROM python:3.11-slim
 
+# Устанавливаем системные зависимости
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
@@ -14,8 +19,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY api_watcher/ ./api_watcher/
 COPY urls.json .
 
-# Создаем директорию для снимков
-RUN mkdir -p snapshots
+# Создаем директории для снимков и логов
+RUN mkdir -p snapshots logs
 
 # Создаем пользователя для безопасности
 RUN useradd --create-home --shell /bin/bash app && \

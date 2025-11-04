@@ -10,7 +10,7 @@ class Config:
     
     # Основные настройки
     SNAPSHOTS_DIR = os.getenv('API_WATCHER_SNAPSHOTS_DIR', 'snapshots')
-    URLS_FILE = os.getenv('API_WATCHER_URLS_FILE', '../urls.json')
+    URLS_FILE = os.getenv('API_WATCHER_URLS_FILE', 'urls.json')
     
     # Настройки HTTP запросов
     REQUEST_TIMEOUT = int(os.getenv('API_WATCHER_TIMEOUT', '30'))
