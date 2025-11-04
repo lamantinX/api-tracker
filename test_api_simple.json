@@ -1,8 +1,0 @@
-[
-  {
-    "url": "https://httpbin.org/json",
-    "type": "json",
-    "name": "HTTPBin Test API",
-    "description": "Простой тест API для проверки изменений"
-  }
-]

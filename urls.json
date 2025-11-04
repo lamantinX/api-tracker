@@ -102,54 +102,6 @@
     "description": "Мониторинг документации метода добавления студента для образовательной единицы"
   },
   {
-    "url": "https://demo.megaplan.ru/api/v3/message",
-    "type": "json",
-    "name": "Megaplan API - Message",
-    "description": "Мониторинг API методов работы с сообщениями"
-  },
-  {
-    "url": "https://demo.megaplan.ru/api/v3/contractorCompany",
-    "type": "json",
-    "name": "Megaplan API - ContractorCompany",
-    "description": "Мониторинг API методов работы с компаниями-контрагентами"
-  },
-  {
-    "url": "https://demo.megaplan.ru/api/v3/contractorHuman",
-    "type": "json",
-    "name": "Megaplan API - ContractorHuman",
-    "description": "Мониторинг API методов работы с физическими лицами-контрагентами"
-  },
-  {
-    "url": "https://demo.megaplan.ru/api/v3/offer",
-    "type": "json",
-    "name": "Megaplan API - Offer",
-    "description": "Мониторинг API методов работы с предложениями"
-  },
-  {
-    "url": "https://demo.megaplan.ru/api/v3/deal",
-    "type": "json",
-    "name": "Megaplan API - Deal",
-    "description": "Мониторинг API методов работы со сделками"
-  },
-  {
-    "url": "https://demo.megaplan.ru/api/v3/todo",
-    "type": "json",
-    "name": "Megaplan API - Todo",
-    "description": "Мониторинг API методов работы с задачами"
-  },
-  {
-    "url": "https://demo.megaplan.ru/api/v3/search",
-    "type": "json",
-    "name": "Megaplan API - Search",
-    "description": "Мониторинг API методов поиска"
-  },
-  {
-    "url": "https://demo.megaplan.ru/api/v3/duplicates",
-    "type": "json",
-    "name": "Megaplan API - Duplicates",
-    "description": "Мониторинг API методов работы с дубликатами"
-  },
-  {
     "url": "https://raw.githubusercontent.com/openai/openai-openapi/manual_spec/openapi.yaml",
     "type": "openapi",
     "name": "OpenAI API - Create Chat Completion",
