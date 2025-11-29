@@ -160,6 +160,7 @@ cython_debug/
 
 # API Watcher specific
 snapshots/
+*.db
 *.json.bak
 test_api.json
 urls_test.json
