@@ -36,6 +36,17 @@ class APIDocsFinder:
         чтобы не триггерить излишний парсинг больших страниц.
         """
         max_bytes = max(1, int(getattr(Config, "MAX_PROBE_BYTES", 256 * 1024)))
+
+        # Быстрый отказ по Content-Length (если есть и он корректный), чтобы не качать гигантские ответы даже частично
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                content_length_int = int(content_length)
+            except ValueError:
+                content_length_int = None
+
+            if content_length_int is not None and content_length_int > max_bytes:
+                raise ValueError(f"Probe response too large: {content_length_int} bytes > {max_bytes}")
         collected = bytearray()
         async for chunk in response.content.iter_chunked(32 * 1024):
             if not chunk:

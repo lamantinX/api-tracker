@@ -23,12 +23,15 @@ async def _read_text_limited(response: aiohttp.ClientResponse, max_bytes: int) -
     # Быстрый отказ по Content-Length, если сервер его честно прислал
     content_length = response.headers.get("Content-Length")
     if content_length:
+        # Ловим только ошибки парсинга int(), а превышение лимита должно прерывать чтение.
         try:
-            if int(content_length) > max_bytes:
-                raise ValueError(f"Response too large: {content_length} bytes > {max_bytes}")
+            content_length_int = int(content_length)
         except ValueError:
             # если Content-Length нечисловой — игнорируем и читаем потоково
-            pass
+            content_length_int = None
+
+        if content_length_int is not None and content_length_int > max_bytes:
+            raise ValueError(f"Response too large: {content_length_int} bytes > {max_bytes}")
 
     collected = bytearray()
     async for chunk in response.content.iter_chunked(64 * 1024):
@@ -263,6 +266,7 @@ class AsyncZenRowsFetcher:
             if daily_request_limit is not None
             else int(getattr(Config, "ZENROWS_DAILY_REQUEST_LIMIT", 2000))
         )
+        self._disabled: bool = False
     
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -274,7 +278,7 @@ class AsyncZenRowsFetcher:
         url: str,
         js_render: bool = True,
         premium_proxy: bool = False,
-        antibot: bool = True
+        antibot: bool = False
     ) -> FetchResult:
         """Асинхронно получает контент через ZenRows с retry"""
         params = {
@@ -295,6 +299,15 @@ class AsyncZenRowsFetcher:
         for attempt in range(self.max_retries):
             try:
                 session = await self._get_session()
+                if self._disabled:
+                    return FetchResult(
+                        content=None,
+                        status_code=0,
+                        success=False,
+                        error="ZenRows disabled (circuit breaker)",
+                        url=url,
+                        attempts=attempt + 1
+                    )
                 # Предохранитель: ZenRows может сжигать бюджет при частом polling или ретраях
                 if not self.usage_tracker.can_use("zenrows", self.daily_request_limit):
                     logger.error(
@@ -332,8 +345,17 @@ class AsyncZenRowsFetcher:
                     
                     # Circuit Breaker for Critical Errors
                     if response.status == 402:
-                        logger.critical("zenrows_payment_required_aborting", url=url)
-                        raise Exception("ZenRows Payment Required (402) - Aborting to save funds")
+                        # На практике 402 может означать "кончился баланс" — не спамим дальше платными запросами
+                        logger.critical("zenrows_payment_required_disabling", url=url)
+                        self._disabled = True
+                        return FetchResult(
+                            content=None,
+                            status_code=402,
+                            success=False,
+                            error="ZenRows Payment Required (402) - disabled",
+                            url=url,
+                            attempts=attempt + 1
+                        )
                     
                     if response.status == 429:
                         logger.error("zenrows_rate_limit_aborting", url=url)
@@ -404,14 +426,24 @@ class AsyncZenRowsFetcher:
     async def fetch_with_fallback(self, url: str) -> Optional[str]:
         """Получает контент с fallback стратегией"""
         # Попытка 1: базовые настройки
-        result = await self.fetch(url, js_render=True, premium_proxy=False)
+        result = await self.fetch(
+            url,
+            js_render=bool(getattr(Config, "ZENROWS_JS_RENDER", True)),
+            premium_proxy=False,
+            antibot=bool(getattr(Config, "ZENROWS_ANTIBOT", False)),
+        )
         if result.success:
             return result.content
         
         logger.warning("zenrows_retry_no_js", url=url)
         
         # Попытка 2: без JS
-        result = await self.fetch(url, js_render=False, premium_proxy=False)
+        result = await self.fetch(
+            url,
+            js_render=False,
+            premium_proxy=False,
+            antibot=bool(getattr(Config, "ZENROWS_ANTIBOT", False)),
+        )
         return result.content if result.success else None
     
     async def close(self) -> None:
@@ -466,8 +498,34 @@ class ContentFetcher:
         Returns:
             Контент или None
         """
+        # Стратегия по умолчанию: direct_first, чтобы не жечь ZenRows на JSON/YAML/простых доменах.
+        strategy = getattr(Config, "ZENROWS_STRATEGY", "direct_first")
+
+        def _looks_static(u: str) -> bool:
+            ul = u.lower()
+            if any(ul.endswith(ext) for ext in (".json", ".yaml", ".yml")):
+                return True
+            # raw github и прочие статики
+            if "raw.githubusercontent.com" in ul:
+                return True
+            return False
+
+        skip_static = bool(getattr(Config, "ZENROWS_SKIP_STATIC", True))
+        should_skip_zenrows = skip_static and _looks_static(url)
+
+        # 1) direct_first: пробуем прямой запрос
+        if strategy != "zenrows_first" or should_skip_zenrows or not self._zenrows:
+            logger.debug("fetching_direct", url=url)
+            direct_result = await self._direct.fetch(url)
+            if direct_result.success and direct_result.content:
+                return direct_result.content
+            # если ZenRows не настроен или нельзя — сдаёмся
+            if not self._zenrows or should_skip_zenrows:
+                return None
+            # иначе пробуем ZenRows как fallback
+
+        # 2) ZenRows (если доступен и не запрещён)
         if self._zenrows:
-            # Если дневной лимит исчерпан — не трогаем ZenRows, а пробуем прямой запрос
             if not self._usage_tracker.can_use("zenrows", int(getattr(Config, "ZENROWS_DAILY_REQUEST_LIMIT", 2000))):
                 logger.error(
                     "zenrows_disabled_due_to_daily_limit",
@@ -475,15 +533,12 @@ class ContentFetcher:
                     limit=getattr(Config, "ZENROWS_DAILY_REQUEST_LIMIT", 2000),
                     usage=self._usage_tracker.get_usage("zenrows")
                 )
-                result = await self._direct.fetch(url)
-                return result.content if result.success else None
+                return None
 
             logger.info("fetching_via_zenrows", url=url)
             return await self._zenrows.fetch_with_fallback(url)
-        else:
-            logger.debug("fetching_direct", url=url)
-            result = await self._direct.fetch(url)
-            return result.content if result.success else None
+
+        return None
     
     async def fetch_many(self, urls: List[str]) -> dict[str, Optional[str]]:
         """

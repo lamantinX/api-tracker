@@ -7,7 +7,7 @@ from api_watcher.utils.async_fetcher import AsyncZenRowsFetcher
 class TestZenRowsOptimization:
     
     async def test_circuit_breaker_payment_required(self):
-        """Test that 402 Payment Required aborts immediately"""
+        """Test that 402 Payment Required disables ZenRows immediately"""
         fetcher = AsyncZenRowsFetcher("test_key")
         
         # Mock session and response
@@ -21,11 +21,12 @@ class TestZenRowsOptimization:
         with patch.object(fetcher, '_get_session', new_callable=AsyncMock) as mock_get_session:
             mock_get_session.return_value = mock_session
             
-            with pytest.raises(Exception) as excinfo:
-                await fetcher.fetch("http://example.com")
-            
-            assert "Payment Required" in str(excinfo.value)
-            # Should only call once
+            result = await fetcher.fetch("http://example.com")
+
+            assert result.success is False
+            assert result.status_code == 402
+            assert "disabled" in (result.error or "").lower()
+            # Should only call once (no retries)
             assert mock_session.get.call_count == 1
 
     async def test_circuit_breaker_rate_limit(self):
