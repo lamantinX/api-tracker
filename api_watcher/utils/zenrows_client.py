@@ -75,15 +75,8 @@ class ZenRowsClient:
         if html:
             return html
         
-        logger.warning("zenrows_retry_premium", url=url)
-        
-        # Попытка 2: с премиум прокси
-        html = self.fetch_html(url, js_render=True, premium_proxy=True)
-        if html:
-            return html
-        
         logger.warning("zenrows_retry_no_js", url=url)
         
-        # Попытка 3: без JS рендеринга
+        # Попытка 2: без JS рендеринга
         html = self.fetch_html(url, js_render=False, premium_proxy=False)
         return html

@@ -73,6 +73,9 @@ class APIWatcher:
         # Comparator (still needed for initial snapshot hash calculation in some cases, 
         # but mostly handled by ChangeDetector. Keeping it for now if needed by legacy methods or direct usage)
         self.comparator = SmartComparator()
+        
+        # Request cache for deduplication within a single cycle
+        self._request_cache: Dict[str, asyncio.Task] = {}
     
     def _create_notifier_manager(self) -> NotifierManager:
         """Creates notifier manager based on config"""
@@ -124,8 +127,36 @@ class APIWatcher:
         return None
     
     async def fetch_content(self, url: str) -> Optional[str]:
-        """Async fetch content"""
-        return await self.fetcher.fetch(url)
+        """
+        Async fetch content with deduplication.
+        If multiple URLs point to the same page (e.g. different anchors),
+        we only fetch it once per cycle.
+        """
+        # Strip anchor for deduplication (e.g. http://site.com#foo -> http://site.com)
+        base_url = url.split('#')[0]
+        
+        # Check cache
+        if base_url in self._request_cache:
+            logger.info(f"🔄 Using cached request for {base_url}")
+            try:
+                return await self._request_cache[base_url]
+            except Exception as e:
+                logger.error(f"❌ Error awaiting cached task for {base_url}: {e}")
+                return None
+            
+        # Create new fetch task
+        # We use base_url to avoid sending anchors to the provider
+        task = asyncio.create_task(self.fetcher.fetch(base_url))
+        self._request_cache[base_url] = task
+        
+        try:
+            return await task
+        except Exception as e:
+            logger.error(f"❌ Error fetching {base_url}: {e}")
+            # Keep the failed task in cache so other requests for the same URL 
+            # (e.g. different anchors) don't trigger a retry in this cycle.
+            # They will receive the same exception/None result.
+            return None
     
     async def process_url(
         self,
@@ -196,6 +227,9 @@ class APIWatcher:
         """Async process URLs from file"""
         logger.info(f"📂 Loading URLs from {urls_file}")
         
+        # Clear request cache for new cycle
+        self._request_cache.clear()
+        
         try:
             with open(urls_file, 'r', encoding='utf-8') as f:
                 urls_data = json.load(f)
@@ -232,6 +266,9 @@ class APIWatcher:
             delay_between_requests: Delay in seconds between starting new requests
         """
         logger.info(f"📂 Loading URLs from {urls_file} (parallel, max={max_concurrent})")
+        
+        # Clear request cache for new cycle
+        self._request_cache.clear()
         
         try:
             with open(urls_file, 'r', encoding='utf-8') as f:
@@ -297,24 +334,31 @@ async def main():
     watcher = APIWatcher()
     
     try:
-        # Process URLs parallel with rate limiting
-        results = await watcher.process_urls_parallel(
-            Config.URLS_FILE,
-            max_concurrent=10,
-            delay_between_requests=0.2
-        )
-        
-        # Stats
-        total = len(results)
-        changed = sum(1 for r in results if r.get('has_changes'))
-        
-        logger.info(f"\n{'='*60}")
-        logger.info(f"📊 STATISTICS")
-        logger.info(f"{'='*60}")
-        logger.info(f"Total checked: {total}")
-        logger.info(f"Changes detected: {changed}")
-        logger.info(f"{'='*60}\n")
-        
+        while True:
+            # Process URLs parallel with rate limiting
+            results = await watcher.process_urls_parallel(
+                Config.URLS_FILE,
+                max_concurrent=10,
+                delay_between_requests=0.2
+            )
+            
+            # Stats
+            total = len(results)
+            changed = sum(1 for r in results if r.get('has_changes'))
+            
+            logger.info(f"\n{'='*60}")
+            logger.info(f"📊 STATISTICS")
+            logger.info(f"{'='*60}")
+            logger.info(f"Total checked: {total}")
+            logger.info(f"Changes detected: {changed}")
+            logger.info(f"{'='*60}\n")
+            
+            if not Config.DAEMON_MODE:
+                break
+            
+            logger.info(f"Sleeping for {Config.CHECK_INTERVAL_SECONDS} seconds...")
+            await asyncio.sleep(Config.CHECK_INTERVAL_SECONDS)
+            
     finally:
         await watcher.cleanup()
 

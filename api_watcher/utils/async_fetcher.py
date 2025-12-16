@@ -9,10 +9,12 @@ from dataclasses import dataclass
 
 import aiohttp
 
-from api_watcher.config import Config
 from api_watcher.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass
 
 
 @dataclass
@@ -202,7 +204,7 @@ class AsyncZenRowsFetcher:
     """Асинхронный клиент ZenRows с retry логикой"""
     
     BASE_URL = "https://api.zenrows.com/v1/"
-    DEFAULT_MAX_RETRIES = 3
+    DEFAULT_MAX_RETRIES = 1
     DEFAULT_RETRY_DELAY = 2.0
     
     def __init__(
@@ -251,8 +253,25 @@ class AsyncZenRowsFetcher:
                     content = await response.text()
                     success = response.status == 200
                     
-                    # Retry on 429 (rate limit) or 5xx errors
-                    if response.status in {429, 500, 502, 503, 504} and attempt < self.max_retries - 1:
+                    # Circuit Breaker for Critical Errors
+                    if response.status == 402:
+                        logger.critical("zenrows_payment_required_aborting", url=url)
+                        raise Exception("ZenRows Payment Required (402) - Aborting to save funds")
+                    
+                    if response.status == 429:
+                        logger.error("zenrows_rate_limit_aborting", url=url)
+                        # Don't retry aggressively on 429, just fail this request
+                        return FetchResult(
+                            content=None,
+                            status_code=429,
+                            success=False,
+                            error="Rate Limit Exceeded",
+                            url=url,
+                            attempts=attempt + 1
+                        )
+
+                    # Retry on 5xx errors
+                    if response.status in {500, 502, 503, 504} and attempt < self.max_retries - 1:
                         logger.warning(
                             "zenrows_retry_status",
                             url=url,
@@ -312,16 +331,9 @@ class AsyncZenRowsFetcher:
         if result.success:
             return result.content
         
-        logger.warning("zenrows_retry_premium", url=url)
-        
-        # Попытка 2: с премиум прокси
-        result = await self.fetch(url, js_render=True, premium_proxy=True)
-        if result.success:
-            return result.content
-        
         logger.warning("zenrows_retry_no_js", url=url)
         
-        # Попытка 3: без JS
+        # Попытка 2: без JS
         result = await self.fetch(url, js_render=False, premium_proxy=False)
         return result.content if result.success else None
     

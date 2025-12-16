@@ -27,6 +27,7 @@ class Config:
     
     # Настройки ZenRows
     ZENROWS_API_KEY: Optional[str] = os.getenv('ZENROWS_API_KEY')
+
     
     # Настройки Gemini AI (deprecated, используйте OpenRouter)
     GEMINI_API_KEY: Optional[str] = os.getenv('GEMINI_API_KEY')
@@ -58,6 +59,10 @@ class Config:
     
     # Настройки логирования
     LOG_LEVEL = os.getenv('API_WATCHER_LOG_LEVEL', 'INFO')
+
+    # Настройки режима работы
+    DAEMON_MODE = os.getenv('API_WATCHER_DAEMON', 'false').lower() == 'true'
+    CHECK_INTERVAL_SECONDS = int(os.getenv('API_WATCHER_CHECK_INTERVAL', '3600'))  # 1 hour default
     
     @classmethod
     def is_telegram_configured(cls) -> bool:

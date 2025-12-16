@@ -40,6 +40,8 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       - ZENROWS_API_KEY=${ZENROWS_API_KEY:-}
+      - API_WATCHER_DAEMON=true
+      - API_WATCHER_CHECK_INTERVAL=${CHECK_INTERVAL:-3600}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
