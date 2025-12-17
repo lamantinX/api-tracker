@@ -278,7 +278,8 @@ class AsyncZenRowsFetcher:
         url: str,
         js_render: bool = True,
         premium_proxy: bool = False,
-        antibot: bool = False
+        antibot: bool = False,
+        skip_counter: bool = False
     ) -> FetchResult:
         """Асинхронно получает контент через ZenRows с retry"""
         params = {
@@ -308,25 +309,57 @@ class AsyncZenRowsFetcher:
                         url=url,
                         attempts=attempt + 1
                     )
-                # Предохранитель: ZenRows может сжигать бюджет при частом polling или ретраях
-                if not self.usage_tracker.can_use("zenrows", self.daily_request_limit):
-                    logger.error(
-                        "zenrows_daily_limit_exceeded",
-                        url=url,
-                        limit=self.daily_request_limit,
-                        usage=self.usage_tracker.get_usage("zenrows")
-                    )
-                    return FetchResult(
-                        content=None,
-                        status_code=0,
-                        success=False,
-                        error="ZenRows daily limit exceeded",
-                        url=url,
-                        attempts=attempt + 1
-                    )
+                
+                # Атомарная проверка лимита и резервирование слота
+                # Это предотвращает race condition при параллельных запросах
+                if skip_counter:
+                    # Для fallback попытки только проверяем лимит (не инкрементируем)
+                    # Счетчик уже был увеличен в первой попытке
+                    if not await self.usage_tracker.can_use("zenrows", self.daily_request_limit):
+                        usage = await self.usage_tracker.get_usage("zenrows")
+                        logger.error(
+                            "zenrows_daily_limit_exceeded_fallback",
+                            url=url,
+                            limit=self.daily_request_limit,
+                            usage=usage
+                        )
+                        return FetchResult(
+                            content=None,
+                            status_code=0,
+                            success=False,
+                            error="ZenRows daily limit exceeded",
+                            url=url,
+                            attempts=attempt + 1
+                        )
+                else:
+                    # Для обычной попытки атомарно проверяем и резервируем слот
+                    # ИСПРАВЛЕНИЕ УЯЗВИМОСТИ #6: Инкремент происходит ТОЛЬКО один раз 
+                    # в начале цикла retry (attempt == 0), а не на каждой итерации.
+                    # Это предотвращает множественный инкремент при retry.
+                    if attempt == 0:
+                        if not await self.usage_tracker.try_increment("zenrows", self.daily_request_limit, 1):
+                            usage = await self.usage_tracker.get_usage("zenrows")
+                            logger.error(
+                                "zenrows_daily_limit_exceeded",
+                                url=url,
+                                limit=self.daily_request_limit,
+                                usage=usage
+                            )
+                            return FetchResult(
+                                content=None,
+                                status_code=0,
+                                success=False,
+                                error="ZenRows daily limit exceeded",
+                                url=url,
+                                attempts=attempt + 1
+                            )
+                    # При retry (attempt > 0) слот уже зарезервирован в первой попытке,
+                    # поэтому мы НЕ инкрементируем счетчик повторно.
+                    # Это исправляет проблему множественного инкремента при retry.
 
-                # Считаем каждый реальный вызов ZenRows (платный), даже если вернётся ошибка
-                self.usage_tracker.increment("zenrows", 1)
+                # Выполняем запрос (счетчик уже увеличен в try_increment() если skip_counter=False и attempt == 0)
+                # Примечание: Если запрос падает с сетевой ошибкой ДО выполнения HTTP запроса,
+                # счетчик уже увеличен, но это правильное поведение - мы резервируем слот для попытки.
                 async with session.get(self.BASE_URL, params=params) as response:
                     try:
                         max_bytes = max(1, int(getattr(Config, "MAX_RESPONSE_BYTES", 2 * 1024 * 1024)))
@@ -370,6 +403,10 @@ class AsyncZenRowsFetcher:
                         )
 
                     # Retry on 5xx errors
+                    # ИСПРАВЛЕНИЕ УЯЗВИМОСТИ #6: При retry мы НЕ инкрементируем счетчик повторно,
+                    # так как слот уже зарезервирован в начале цикла (attempt == 0) через try_increment().
+                    # Это предотвращает множественный инкремент при retry - счетчик увеличивается только один раз
+                    # для всех попыток retry в рамках одного запроса.
                     if response.status in {500, 502, 503, 504} and attempt < self.max_retries - 1:
                         logger.warning(
                             "zenrows_retry_status",
@@ -395,13 +432,18 @@ class AsyncZenRowsFetcher:
                     )
                     
             except RETRYABLE_EXCEPTIONS as e:
+                # ИСПРАВЛЕНИЕ УЯЗВИМОСТИ #6: При сетевых ошибках (RETRYABLE_EXCEPTIONS) 
+                # счетчик уже был увеличен при attempt == 0, но мы НЕ инкрементируем его повторно при retry.
+                # Это правильное поведение - мы резервируем один слот для всех попыток retry.
                 last_error = str(e)
                 if attempt < self.max_retries - 1:
                     logger.warning("zenrows_retry_error", url=url, error=str(e), attempt=attempt + 1)
                     await asyncio.sleep(delay)
                     delay *= 2
+                    # Продолжаем цикл - счетчик НЕ инкрементируется повторно
                 else:
                     logger.error("zenrows_failed", url=url, error=str(e), attempts=attempt + 1)
+                    # Все попытки исчерпаны - счетчик был увеличен только один раз при attempt == 0
                     
             except Exception as e:
                 logger.error("zenrows_error", url=url, error=str(e), exc_info=True)
@@ -424,25 +466,30 @@ class AsyncZenRowsFetcher:
         )
     
     async def fetch_with_fallback(self, url: str) -> Optional[str]:
-        """Получает контент с fallback стратегией"""
-        # Попытка 1: базовые настройки
+        """
+        Получает контент с fallback стратегией.
+        Вторая попытка НЕ инкрементирует счетчик, чтобы избежать двойного подсчета.
+        """
+        # Попытка 1: базовые настройки (инкрементирует счетчик)
         result = await self.fetch(
             url,
             js_render=bool(getattr(Config, "ZENROWS_JS_RENDER", True)),
             premium_proxy=False,
             antibot=bool(getattr(Config, "ZENROWS_ANTIBOT", False)),
+            skip_counter=False
         )
         if result.success:
             return result.content
         
         logger.warning("zenrows_retry_no_js", url=url)
         
-        # Попытка 2: без JS
+        # Попытка 2: без JS (НЕ инкрементирует счетчик - это fallback в рамках одного запроса)
         result = await self.fetch(
             url,
             js_render=False,
             premium_proxy=False,
             antibot=bool(getattr(Config, "ZENROWS_ANTIBOT", False)),
+            skip_counter=True  # Пропускаем инкремент для fallback попытки
         )
         return result.content if result.success else None
     
@@ -526,12 +573,15 @@ class ContentFetcher:
 
         # 2) ZenRows (если доступен и не запрещён)
         if self._zenrows:
-            if not self._usage_tracker.can_use("zenrows", int(getattr(Config, "ZENROWS_DAILY_REQUEST_LIMIT", 2000))):
+            # Используем атомарную операцию для проверки лимита
+            limit = int(getattr(Config, "ZENROWS_DAILY_REQUEST_LIMIT", 2000))
+            if not await self._usage_tracker.can_use("zenrows", limit):
+                usage = await self._usage_tracker.get_usage("zenrows")
                 logger.error(
                     "zenrows_disabled_due_to_daily_limit",
                     url=url,
-                    limit=getattr(Config, "ZENROWS_DAILY_REQUEST_LIMIT", 2000),
-                    usage=self._usage_tracker.get_usage("zenrows")
+                    limit=limit,
+                    usage=usage
                 )
                 return None
 
