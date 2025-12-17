@@ -42,6 +42,16 @@ class Config:
     # Предохранитель от выжигания баланса: дневной лимит запросов к ZenRows
     # -1 = безлимит, 0 = запретить ZenRows, >0 = максимум запросов/день
     ZENROWS_DAILY_REQUEST_LIMIT = int(os.getenv('API_WATCHER_ZENROWS_DAILY_REQUEST_LIMIT', '2000'))
+    # Стратегия использования ZenRows:
+    # - direct_first (по умолчанию): сначала прямой запрос, ZenRows только при блокировке/ошибке
+    # - zenrows_first: всегда через ZenRows (дорого)
+    ZENROWS_STRATEGY = os.getenv('API_WATCHER_ZENROWS_STRATEGY', 'direct_first').lower()
+    # Включать JS рендер в ZenRows (дорого). По умолчанию включено только для fallback.
+    ZENROWS_JS_RENDER = os.getenv('API_WATCHER_ZENROWS_JS_RENDER', 'true').lower() == 'true'
+    # Включать antibot (может быть дороже). По умолчанию отключено.
+    ZENROWS_ANTIBOT = os.getenv('API_WATCHER_ZENROWS_ANTIBOT', 'false').lower() == 'true'
+    # Никогда не использовать ZenRows для "статических" URL (yaml/json/raw), чтобы не сжигать бюджет
+    ZENROWS_SKIP_STATIC = os.getenv('API_WATCHER_ZENROWS_SKIP_STATIC', 'true').lower() == 'true'
     # Разрешить частый polling в daemon режиме (опасно при ZenRows)
     ALLOW_FAST_POLL = os.getenv('API_WATCHER_ALLOW_FAST_POLL', 'false').lower() == 'true'
     # Минимальный безопасный интервал проверки (сек)
