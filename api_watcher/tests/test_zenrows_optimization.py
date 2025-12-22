@@ -7,7 +7,7 @@ from api_watcher.utils.async_fetcher import AsyncZenRowsFetcher
 class TestZenRowsOptimization:
     
     async def test_circuit_breaker_payment_required(self):
-        """Test that 402 Payment Required aborts immediately"""
+        """Test that 402 Payment Required triggers circuit breaker"""
         fetcher = AsyncZenRowsFetcher("test_key")
         
         # Mock session and response
@@ -21,11 +21,25 @@ class TestZenRowsOptimization:
         with patch.object(fetcher, '_get_session', new_callable=AsyncMock) as mock_get_session:
             mock_get_session.return_value = mock_session
             
-            with pytest.raises(Exception) as excinfo:
-                await fetcher.fetch("http://example.com")
+            result = await fetcher.fetch("http://example.com")
             
-            assert "Payment Required" in str(excinfo.value)
+            # Should return error result, not raise
+            assert result.success is False
+            assert result.status_code == 402
+            assert "Payment Required" in result.error
+            
+            # Circuit breaker should be triggered
+            assert fetcher._disabled is True
+            assert fetcher._disabled_reason == "payment_required_402"
+            
             # Should only call once
+            assert mock_session.get.call_count == 1
+            
+            # Subsequent calls should be blocked by circuit breaker
+            result2 = await fetcher.fetch("http://example2.com")
+            assert result2.success is False
+            assert "disabled" in result2.error.lower()
+            # No additional API calls
             assert mock_session.get.call_count == 1
 
     async def test_circuit_breaker_rate_limit(self):
@@ -67,41 +81,93 @@ class TestZenRowsOptimization:
             
             assert result.success is False
             assert result.status_code == 500
-            # max_retries is 1, so it runs the loop once (0 to 0)
-            # Wait, range(self.max_retries) where max_retries=1 is [0], so 1 iteration.
+            # max_retries is 1, so it runs the loop once
             assert mock_session.get.call_count == 1
 
-    async def test_no_premium_proxy_fallback(self):
-        """Test that fetch_with_fallback does NOT use premium proxy"""
-        fetcher = AsyncZenRowsFetcher("test_key")
+    async def test_daily_limit(self):
+        """Test that daily limit blocks requests"""
+        fetcher = AsyncZenRowsFetcher("test_key", daily_limit=2)
         
-        # Mock fetch to always fail
-        mock_result_fail = Mock(success=False, content=None)
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.text.return_value = "OK"
         
-        with patch.object(fetcher, 'fetch', new_callable=AsyncMock) as mock_fetch:
-            mock_fetch.return_value = mock_result_fail
+        mock_session = AsyncMock()
+        mock_session.get.return_value.__aenter__.return_value = mock_response
+        
+        with patch.object(fetcher, '_get_session', new_callable=AsyncMock) as mock_get_session:
+            mock_get_session.return_value = mock_session
             
-            await fetcher.fetch_with_fallback("http://example.com")
+            # First 2 requests should succeed
+            result1 = await fetcher.fetch("http://example1.com")
+            result2 = await fetcher.fetch("http://example2.com")
             
-            # Should call twice: 
-            # 1. Standard (js_render=True, premium_proxy=False)
-            # 2. No-JS (js_render=False, premium_proxy=False)
-            assert mock_fetch.call_count == 2
+            assert result1.success is True
+            assert result2.success is True
+            assert mock_session.get.call_count == 2
             
-            # Verify arguments of calls
-            calls = mock_fetch.call_args_list
-            
-            # Call 1
-            args1, kwargs1 = calls[0]
-            assert kwargs1.get('premium_proxy') is False
-            assert kwargs1.get('js_render') is True
-            
-            # Call 2
-            args2, kwargs2 = calls[1]
-            assert kwargs2.get('premium_proxy') is False
-            assert kwargs2.get('js_render') is False
-            
-            # Ensure NO call had premium_proxy=True
-            for call in calls:
-                assert call.kwargs.get('premium_proxy') is False
+            # Third request should be blocked
+            result3 = await fetcher.fetch("http://example3.com")
+            assert result3.success is False
+            assert "Daily limit exceeded" in result3.error
+            # No additional API call
+            assert mock_session.get.call_count == 2
 
+    async def test_domain_blocking(self):
+        """Test that domains are blocked after repeated failures"""
+        fetcher = AsyncZenRowsFetcher("test_key", daily_limit=100)
+        
+        mock_response = AsyncMock()
+        mock_response.status = 500
+        mock_response.text.return_value = "Server Error"
+        
+        mock_session = AsyncMock()
+        mock_session.get.return_value.__aenter__.return_value = mock_response
+        
+        with patch.object(fetcher, '_get_session', new_callable=AsyncMock) as mock_get_session:
+            mock_get_session.return_value = mock_session
+            
+            # Make MAX_DOMAIN_FAILURES requests to same domain
+            for i in range(AsyncZenRowsFetcher.MAX_DOMAIN_FAILURES):
+                await fetcher.fetch("http://failing-domain.com/page")
+            
+            # Domain should now be blocked
+            assert "failing-domain.com" in fetcher._blocked_domains
+            
+            # Next request to same domain should be blocked without API call
+            call_count_before = mock_session.get.call_count
+            result = await fetcher.fetch("http://failing-domain.com/other-page")
+            
+            assert result.success is False
+            assert "blocked" in result.error.lower()
+            assert mock_session.get.call_count == call_count_before  # No new calls
+
+    async def test_consecutive_errors_circuit_breaker(self):
+        """Test that too many consecutive errors triggers global circuit breaker"""
+        fetcher = AsyncZenRowsFetcher("test_key", daily_limit=100)
+        
+        mock_response = AsyncMock()
+        mock_response.status = 500
+        mock_response.text.return_value = "Server Error"
+        
+        mock_session = AsyncMock()
+        mock_session.get.return_value.__aenter__.return_value = mock_response
+        
+        with patch.object(fetcher, '_get_session', new_callable=AsyncMock) as mock_get_session:
+            mock_get_session.return_value = mock_session
+            
+            # Make MAX_CONSECUTIVE_ERRORS requests (different domains to avoid domain blocking)
+            for i in range(AsyncZenRowsFetcher.MAX_CONSECUTIVE_ERRORS):
+                await fetcher.fetch(f"http://domain{i}.com/page")
+            
+            # Circuit breaker should be triggered
+            assert fetcher._disabled is True
+            assert fetcher._disabled_reason == "consecutive_errors"
+            
+            # Next request should be blocked
+            call_count_before = mock_session.get.call_count
+            result = await fetcher.fetch("http://new-domain.com/page")
+            
+            assert result.success is False
+            assert "consecutive errors" in result.error.lower()
+            assert mock_session.get.call_count == call_count_before  # No new calls

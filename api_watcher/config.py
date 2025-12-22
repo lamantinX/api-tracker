@@ -27,6 +27,13 @@ class Config:
     
     # Настройки ZenRows
     ZENROWS_API_KEY: Optional[str] = os.getenv('ZENROWS_API_KEY')
+    
+    # ZenRows защиты от перерасхода
+    ZENROWS_STRATEGY: str = os.getenv('API_WATCHER_ZENROWS_STRATEGY', 'direct_first')  # direct_first | zenrows_only
+    ZENROWS_SKIP_STATIC: bool = os.getenv('API_WATCHER_ZENROWS_SKIP_STATIC', 'true').lower() == 'true'
+    ZENROWS_ANTIBOT: bool = os.getenv('API_WATCHER_ZENROWS_ANTIBOT', 'false').lower() == 'true'
+    ZENROWS_JS_RENDER: bool = os.getenv('API_WATCHER_ZENROWS_JS_RENDER', 'true').lower() == 'true'
+    ZENROWS_DAILY_LIMIT: int = int(os.getenv('API_WATCHER_ZENROWS_DAILY_REQUEST_LIMIT', '500'))
 
     
     # Настройки Gemini AI (deprecated, используйте OpenRouter)

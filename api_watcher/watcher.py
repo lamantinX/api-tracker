@@ -53,7 +53,12 @@ class APIWatcher:
         self.fetcher = fetcher or ContentFetcher(
             zenrows_api_key=self.config.ZENROWS_API_KEY,
             timeout=self.config.REQUEST_TIMEOUT,
-            user_agent=self.config.USER_AGENT
+            user_agent=self.config.USER_AGENT,
+            strategy=self.config.ZENROWS_STRATEGY,
+            skip_static=self.config.ZENROWS_SKIP_STATIC,
+            zenrows_daily_limit=self.config.ZENROWS_DAILY_LIMIT,
+            zenrows_js_render=self.config.ZENROWS_JS_RENDER,
+            zenrows_antibot=self.config.ZENROWS_ANTIBOT
         )
         
         # Notifier Manager (DI or default)
