@@ -1,0 +1,42 @@
+[Unit]
+Description=API Watcher Service
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=apiwatcher
+Group=apiwatcher
+WorkingDirectory=/opt/api-tracker
+
+# Переменные окружения
+Environment="PYTHONPATH=/opt/api-tracker"
+Environment="API_WATCHER_URLS_FILE=/opt/api-tracker/urls.json"
+Environment="PYTHONUNBUFFERED=1"
+Environment="API_WATCHER_LOG_LEVEL=DEBUG"
+
+# Загружаем .env файл
+EnvironmentFile=-/opt/api-tracker/.env
+
+# Команда запуска с улучшенной диагностикой
+ExecStartPre=/bin/bash -c 'echo "Starting API Watcher at $(date)"'
+ExecStartPre=/bin/bash -c 'ls -la /opt/api-tracker/api_watcher/watcher.py || exit 1'
+ExecStartPre=/opt/api-tracker/venv/bin/python -c "import sys; sys.path.insert(0, '/opt/api-tracker'); from api_watcher.config import Config; print('Config loaded successfully')"
+
+ExecStart=/opt/api-tracker/venv/bin/python -u /opt/api-tracker/api_watcher/watcher.py
+
+# Логирование
+StandardOutput=append:/var/log/api-watcher/watcher.log
+StandardError=append:/var/log/api-watcher/watcher.error.log
+StandardInput=null
+
+# Создание директории для логов
+ExecStartPre=/bin/mkdir -p /var/log/api-watcher
+ExecStartPre=/bin/chown apiwatcher:apiwatcher /var/log/api-watcher
+
+# Restart policy
+Restart=no
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

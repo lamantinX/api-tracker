@@ -14,7 +14,14 @@ class Config:
     
     # Основные настройки
     SNAPSHOTS_DIR = os.getenv('API_WATCHER_SNAPSHOTS_DIR', 'snapshots')
-    URLS_FILE = os.getenv('API_WATCHER_URLS_FILE', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'urls.json'))
+    # Use absolute path or env variable, fallback to urls.json in current directory
+    _default_urls_file = os.getenv('API_WATCHER_URLS_FILE')
+    if not _default_urls_file:
+        # Try to find urls.json relative to project root
+        _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _candidate = os.path.join(_project_root, 'urls.json')
+        _default_urls_file = _candidate if os.path.exists(_candidate) else 'urls.json'
+    URLS_FILE = _default_urls_file
     
     # Настройки HTTP запросов
     REQUEST_TIMEOUT = int(os.getenv('API_WATCHER_TIMEOUT', '30'))
