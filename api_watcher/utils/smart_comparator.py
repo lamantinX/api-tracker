@@ -9,6 +9,8 @@ import hashlib
 import html2text
 import logging
 
+from api_watcher.config import Config
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,6 +26,16 @@ class SmartComparator:
     def html_to_text(self, html: str) -> str:
         """Конвертирует HTML в читаемый текст"""
         try:
+            max_chars = max(1, int(getattr(Config, "MAX_HTML_TO_TEXT_CHARS", 500_000)))
+            if len(html) > max_chars:
+                # Защита: не конвертируем огромные HTML целиком (это может быть очень дорого).
+                # Берём начало и конец, чтобы сохранить контекст и хоть какую-то стабильность сравнения.
+                half = max_chars // 2
+                html = (
+                    html[:half]
+                    + "\n<!-- api_watcher: truncated_html_to_text -->\n"
+                    + html[-half:]
+                )
             return self.html_converter.handle(html)
         except Exception as e:
             logger.error(f"❌ Ошибка конвертации HTML: {e}")

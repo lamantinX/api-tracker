@@ -1,0 +1,14 @@
+[Unit]
+Description=Run API Watcher periodically
+Requires=api-watcher.service
+
+[Timer]
+# Запуск через 1 минуту после загрузки
+OnBootSec=1min
+# Запуск каждые 1 час
+OnUnitActiveSec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+

@@ -65,8 +65,11 @@ class UsageTracker:
         
     def can_use(self, service_name: str, limit: int) -> bool:
         """Проверяет, можно ли использовать сервис"""
-        if limit <= 0: # 0 или -1 как "безлимит" или отключено? Пусть будет 0 = отключено использование
-             return False
+        # -1 = безлимит, 0 = отключено, >0 = лимит
+        if limit < 0:
+            return True
+        if limit == 0:
+            return False
         
         usage = self.get_usage(service_name)
         if usage >= limit:

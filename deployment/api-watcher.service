@@ -1,0 +1,18 @@
+[Unit]
+Description=API Watcher Service
+After=network.target
+
+[Service]
+Type=oneshot
+User=apiwatcher
+Group=apiwatcher
+WorkingDirectory=/opt/api-tracker
+Environment="PYTHONPATH=/opt/api-tracker"
+EnvironmentFile=/opt/api-tracker/.env
+ExecStart=/opt/api-tracker/venv/bin/python api_watcher/watcher.py
+StandardOutput=append:/var/log/api-watcher/watcher.log
+StandardError=append:/var/log/api-watcher/watcher.error.log
+
+[Install]
+WantedBy=multi-user.target
+

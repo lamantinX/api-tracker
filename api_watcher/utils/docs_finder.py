@@ -9,6 +9,8 @@ from typing import Optional, Dict
 from urllib.parse import urlparse
 import aiohttp
 
+from api_watcher.config import Config
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,11 +28,32 @@ class APIDocsFinder:
         """
         self.serpapi_key = serpapi_key
         self.session: Optional[aiohttp.ClientSession] = None
+        self._semaphore: Optional[asyncio.Semaphore] = None
+
+    async def _read_text_probe(self, response: aiohttp.ClientResponse) -> str:
+        """
+        Читает только ограниченный объём текста для эвристик (openapi/swagger),
+        чтобы не триггерить излишний парсинг больших страниц.
+        """
+        max_bytes = max(1, int(getattr(Config, "MAX_PROBE_BYTES", 256 * 1024)))
+        collected = bytearray()
+        async for chunk in response.content.iter_chunked(32 * 1024):
+            if not chunk:
+                continue
+            collected.extend(chunk)
+            if len(collected) >= max_bytes:
+                break
+
+        charset = response.charset or "utf-8"
+        return collected.decode(charset, errors="replace")
     
     async def __aenter__(self):
         """Async context manager entry"""
         self.session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=30)
+        )
+        self._semaphore = asyncio.Semaphore(
+            max(1, int(getattr(Config, "DOCS_FINDER_MAX_CONCURRENT", 4)))
         )
         return self
     
@@ -38,6 +61,7 @@ class APIDocsFinder:
         """Async context manager exit"""
         if self.session:
             await self.session.close()
+        self._semaphore = None
     
     @staticmethod
     def _extract_base_url(url: str) -> Optional[str]:
@@ -76,23 +100,42 @@ class APIDocsFinder:
         full_url = f"{base_url}{path}"
         
         try:
-            async with self.session.get(full_url, allow_redirects=True) as response:
-                if response.status == 200:
-                    content_type = response.headers.get('Content-Type', '')
-                    
-                    # Проверяем, что это JSON или YAML
-                    if 'json' in content_type or 'yaml' in content_type or 'yml' in content_type:
-                        logger.info(f"✅ Найдена OpenAPI документация: {full_url}")
-                        return full_url
-                    
-                    # Проверяем содержимое на наличие OpenAPI/Swagger
-                    try:
-                        text = await response.text()
-                        if any(keyword in text.lower() for keyword in ['openapi', 'swagger', '"paths":', '"info":']):
+            # Внутренние проверки лимитируем семафором, иначе это пробивает общий max_concurrent watcher'а
+            if self._semaphore:
+                async with self._semaphore:
+                    async with self.session.get(full_url, allow_redirects=True) as response:
+                        if response.status == 200:
+                            content_type = response.headers.get('Content-Type', '')
+                            
+                            # Проверяем, что это JSON или YAML
+                            if 'json' in content_type or 'yaml' in content_type or 'yml' in content_type:
+                                logger.info(f"✅ Найдена OpenAPI документация: {full_url}")
+                                return full_url
+                            
+                            # Проверяем содержимое на наличие OpenAPI/Swagger (только preview)
+                            try:
+                                text = await self._read_text_probe(response)
+                                text_lower = text.lower()
+                                if any(keyword in text_lower for keyword in ['openapi', 'swagger', '"paths":', '"info":']):
+                                    logger.info(f"✅ Найдена OpenAPI документация: {full_url}")
+                                    return full_url
+                            except Exception:
+                                pass
+            else:
+                async with self.session.get(full_url, allow_redirects=True) as response:
+                    if response.status == 200:
+                        content_type = response.headers.get('Content-Type', '')
+                        if 'json' in content_type or 'yaml' in content_type or 'yml' in content_type:
                             logger.info(f"✅ Найдена OpenAPI документация: {full_url}")
                             return full_url
-                    except:
-                        pass
+                        try:
+                            text = await self._read_text_probe(response)
+                            text_lower = text.lower()
+                            if any(keyword in text_lower for keyword in ['openapi', 'swagger', '"paths":', '"info":']):
+                                logger.info(f"✅ Найдена OpenAPI документация: {full_url}")
+                                return full_url
+                        except Exception:
+                            pass
         
         except Exception as e:
             logger.debug(f"Не удалось проверить {full_url}: {e}")

@@ -56,9 +56,16 @@ class ContentProcessor:
             )
             return _result(False, f"HTTP {status_code}")
         
-        # Try to parse as JSON and check for error fields FIRST
-        # This allows short JSON error responses to be caught
+        # Try to parse as JSON and check for error fields FIRST.
+        # Важно: не пытаемся json.loads() на любой HTML-странице — это дорого на больших ответах.
+        stripped = content.lstrip()
+        looks_like_json = bool(stripped) and stripped[0] in ['{', '[']
+        max_json_chars = max(1, int(getattr(Config, "MAX_JSON_PARSE_CHARS", 2 * 1024 * 1024)))
+
         try:
+            if not looks_like_json or len(content) > max_json_chars:
+                raise json.JSONDecodeError("Skip JSON parse (heuristics)", content, 0)
+
             data = json.loads(content)
             
             # Check for explicit error indicators
@@ -116,9 +123,8 @@ class ContentProcessor:
             return _result(False, f"Short response ({len(content)} chars)")
         
         # HTML/Text validation - check for common error indicators
-        # Only check the beginning of the content to avoid false positives
-        content_lower = content.lower()
-        content_start = content_lower[:1000]  # Check only first 1000 chars
+        # Only check the beginning of the content to avoid false positives (и не делать lower() на весь ответ)
+        content_start = content[:1000].lower()  # Check only first 1000 chars
         
         # Check for error page patterns (usually in title or at the start)
         error_page_indicators = [
@@ -165,6 +171,12 @@ class ContentProcessor:
             return 'openapi'
         
         try:
+            stripped = content.lstrip()
+            looks_like_json = bool(stripped) and stripped[0] in ['{', '[']
+            max_json_chars = max(1, int(getattr(Config, "MAX_JSON_PARSE_CHARS", 2 * 1024 * 1024)))
+            if not looks_like_json or len(content) > max_json_chars:
+                raise json.JSONDecodeError("Skip JSON parse (heuristics)", content, 0)
+
             data = json.loads(content)
             if 'openapi' in data or 'swagger' in data:
                 return 'openapi'

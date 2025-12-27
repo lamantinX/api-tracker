@@ -28,7 +28,8 @@ class HTMLParser:
         anchor = url.split('#')[1] if '#' in url else None
         
         try:
-            response = self.session.get(base_url, timeout=Config.REQUEST_TIMEOUT)
+            # Stream, чтобы можно было ограничить размер скачиваемого контента
+            response = self.session.get(base_url, timeout=Config.REQUEST_TIMEOUT, stream=True)
             response.raise_for_status()
         except Timeout:
             raise Exception(f"Timeout при подключении к {base_url}")
@@ -40,18 +41,41 @@ class HTMLParser:
         except Exception as e:
             raise Exception(f"Неожиданная ошибка при запросе {base_url}: {str(e)}")
         
+        # Проверяем Content-Type на HTML (минимальная защита от неожиданных бинарных/огромных ответов)
+        content_type = (response.headers.get('content-type') or '').lower()
+        if content_type and 'text/html' not in content_type and 'application/xhtml' not in content_type:
+            logger.warning("non_html_content_type", url=base_url, content_type=content_type)
+
+        # Читаем контент с ограничением по размеру
+        max_bytes = max(1, int(getattr(Config, "MAX_RESPONSE_BYTES", 2 * 1024 * 1024)))
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                if int(content_length) > max_bytes:
+                    raise Exception(f"Слишком большой HTML ответ для {base_url}: {content_length} bytes > {max_bytes}")
+            except ValueError:
+                pass
+
+        content_bytes = bytearray()
+        for chunk in response.iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            content_bytes.extend(chunk)
+            if len(content_bytes) > max_bytes:
+                raise Exception(f"Слишком большой HTML ответ для {base_url}: read>{max_bytes} bytes")
+
         # Проверяем, что контент не пустой
-        if not response.content:
+        if not content_bytes:
             logger.warning("empty_html_response", url=base_url)
             raise Exception(f"Сервер вернул пустой ответ для {base_url}")
         
-        soup = BeautifulSoup(response.content, 'html.parser')
+        soup = BeautifulSoup(bytes(content_bytes), 'html.parser')
         
         # Определяем целевую секцию
         if selector:
             target_section = soup.select_one(selector)
             if not target_section:
-                print(f"⚠️ Селектор '{selector}' не найден на странице")
+                logger.warning("selector_not_found", selector=selector, url=base_url)
                 target_section = soup
         elif anchor:
             # Ищем элемент с id равным якорю
@@ -76,7 +100,7 @@ class HTMLParser:
                                        soup.find(attrs={'data-id': anchor})
                         
                         if not target_section:
-                            print(f"⚠️ Якорь '#{anchor}' не найден на странице, используем всю страницу")
+                            logger.warning("anchor_not_found", anchor=anchor, url=base_url)
                             target_section = soup
         else:
             target_section = soup

@@ -5,6 +5,7 @@ Refactoring: Repository pattern, Notifier adapters, Async fetch, SRP compliance
 
 import json
 import asyncio
+import os
 from typing import Dict, List, Optional
 from datetime import datetime
 
@@ -28,6 +29,29 @@ from api_watcher.logging_config import setup_from_config, get_logger
 # Initialize structured logging
 setup_from_config(Config)
 logger = get_logger(__name__)
+
+def _acquire_lockfile(lock_path: str) -> int:
+    """
+    Простой lockfile, чтобы не запускать несколько инстансов watcher одновременно.
+    Возвращает fd (держим открытым до конца процесса).
+    """
+    flags = os.O_CREAT | os.O_EXCL | os.O_RDWR
+    fd = os.open(lock_path, flags)
+    try:
+        os.write(fd, str(os.getpid()).encode("utf-8"))
+    except Exception:
+        pass
+    return fd
+
+def _release_lockfile(fd: Optional[int], lock_path: str) -> None:
+    try:
+        if fd is not None:
+            os.close(fd)
+    finally:
+        try:
+            os.remove(lock_path)
+        except Exception:
+            pass
 
 
 class APIWatcher:
@@ -337,8 +361,34 @@ class APIWatcher:
 async def main():
     """Main async function"""
     watcher = APIWatcher()
+    lock_fd: Optional[int] = None
+    lock_path = os.getenv("API_WATCHER_LOCKFILE", os.path.join(watcher.config.SNAPSHOTS_DIR, ".api_watcher.lock"))
     
     try:
+        if os.getenv("API_WATCHER_DISABLE_LOCK", "false").lower() != "true":
+            os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+            try:
+                lock_fd = _acquire_lockfile(lock_path)
+                logger.info("lock_acquired", lockfile=lock_path)
+            except FileExistsError:
+                logger.critical("another_instance_running", lockfile=lock_path)
+                return
+
+        # Guard: слишком частый polling в daemon режиме может сжечь ZenRows
+        sleep_seconds = watcher.config.CHECK_INTERVAL_SECONDS
+        if (
+            watcher.config.DAEMON_MODE
+            and watcher.config.is_zenrows_configured()
+            and not watcher.config.ALLOW_FAST_POLL
+            and sleep_seconds < watcher.config.MIN_CHECK_INTERVAL_SECONDS
+        ):
+            logger.critical(
+                "check_interval_too_low_clamped",
+                configured=sleep_seconds,
+                clamped_to=watcher.config.MIN_CHECK_INTERVAL_SECONDS
+            )
+            sleep_seconds = watcher.config.MIN_CHECK_INTERVAL_SECONDS
+
         while True:
             # Process URLs parallel with rate limiting
             results = await watcher.process_urls_parallel(
@@ -361,11 +411,12 @@ async def main():
             if not Config.DAEMON_MODE:
                 break
             
-            logger.info(f"Sleeping for {Config.CHECK_INTERVAL_SECONDS} seconds...")
-            await asyncio.sleep(Config.CHECK_INTERVAL_SECONDS)
+            logger.info(f"Sleeping for {sleep_seconds} seconds...")
+            await asyncio.sleep(sleep_seconds)
             
     finally:
         await watcher.cleanup()
+        _release_lockfile(lock_fd, lock_path)
 
 
 if __name__ == '__main__':

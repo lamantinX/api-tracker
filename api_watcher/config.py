@@ -20,6 +20,18 @@ class Config:
     REQUEST_TIMEOUT = int(os.getenv('API_WATCHER_TIMEOUT', '30'))
     USER_AGENT = os.getenv('API_WATCHER_USER_AGENT', 
                           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+
+    # Safety limits to prevent excessive parsing / memory usage
+    # Максимальный размер ответа, который мы готовы читать/парсить (в байтах)
+    MAX_RESPONSE_BYTES = int(os.getenv('API_WATCHER_MAX_RESPONSE_BYTES', str(2 * 1024 * 1024)))  # 2MB
+    # Максимальный объём, который читаем для эвристик/поиска OpenAPI (в байтах)
+    MAX_PROBE_BYTES = int(os.getenv('API_WATCHER_MAX_PROBE_BYTES', str(256 * 1024)))  # 256KB
+    # Ограничение параллельности внутренних проверок документации (чтобы не пробивать лимиты)
+    DOCS_FINDER_MAX_CONCURRENT = int(os.getenv('API_WATCHER_DOCS_FINDER_MAX_CONCURRENT', '4'))
+    # Ограничение на парсинг JSON (в символах) при валидации/детекте типа
+    MAX_JSON_PARSE_CHARS = int(os.getenv('API_WATCHER_MAX_JSON_PARSE_CHARS', str(2 * 1024 * 1024)))  # 2M chars
+    # Ограничение на конвертацию HTML->text (в символах) для защиты от тяжёлых страниц
+    MAX_HTML_TO_TEXT_CHARS = int(os.getenv('API_WATCHER_MAX_HTML_TO_TEXT_CHARS', str(500_000)))
     
     # Настройки Telegram (опционально)
     TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -29,11 +41,18 @@ class Config:
     ZENROWS_API_KEY: Optional[str] = os.getenv('ZENROWS_API_KEY')
     
     # ZenRows защиты от перерасхода
+    # Предохранитель от выжигания баланса: дневной лимит запросов к ZenRows
+    # -1 = безлимит, 0 = запретить ZenRows, >0 = максимум запросов/день
+    ZENROWS_DAILY_REQUEST_LIMIT = int(os.getenv('API_WATCHER_ZENROWS_DAILY_REQUEST_LIMIT', '2000'))
     ZENROWS_STRATEGY: str = os.getenv('API_WATCHER_ZENROWS_STRATEGY', 'direct_first')  # direct_first | zenrows_only
     ZENROWS_SKIP_STATIC: bool = os.getenv('API_WATCHER_ZENROWS_SKIP_STATIC', 'true').lower() == 'true'
     ZENROWS_ANTIBOT: bool = os.getenv('API_WATCHER_ZENROWS_ANTIBOT', 'false').lower() == 'true'
     ZENROWS_JS_RENDER: bool = os.getenv('API_WATCHER_ZENROWS_JS_RENDER', 'true').lower() == 'true'
-    ZENROWS_DAILY_LIMIT: int = int(os.getenv('API_WATCHER_ZENROWS_DAILY_REQUEST_LIMIT', '500'))
+    
+    # Разрешить частый polling в daemon режиме (опасно при ZenRows)
+    ALLOW_FAST_POLL = os.getenv('API_WATCHER_ALLOW_FAST_POLL', 'false').lower() == 'true'
+    # Минимальный безопасный интервал проверки (сек)
+    MIN_CHECK_INTERVAL_SECONDS = int(os.getenv('API_WATCHER_MIN_CHECK_INTERVAL', '300'))
 
     
     # Настройки Gemini AI (deprecated, используйте OpenRouter)
