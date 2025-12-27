@@ -1,4 +1,5 @@
 import json
+import yaml
 from typing import Dict, Optional, Any, List
 
 from api_watcher.storage.repository import SnapshotRepository
@@ -102,8 +103,21 @@ class ChangeDetector:
         logger.info("comparing_openapi", url=url)
         
         try:
-            old_spec = json.loads(old_snapshot.structured_data) if old_snapshot.structured_data else json.loads(old_snapshot.raw_html)
-            new_spec = json.loads(new_html)
+            # Parse old spec
+            if old_snapshot.structured_data:
+                old_spec = json.loads(old_snapshot.structured_data)
+            else:
+                # Try JSON first, then YAML
+                try:
+                    old_spec = json.loads(old_snapshot.raw_html)
+                except (json.JSONDecodeError, ValueError):
+                    old_spec = yaml.safe_load(old_snapshot.raw_html)
+            
+            # Parse new spec
+            try:
+                new_spec = json.loads(new_html)
+            except (json.JSONDecodeError, ValueError):
+                new_spec = yaml.safe_load(new_html)
             
             has_changes, changes_dict = self.comparator.compare_openapi(old_spec, new_spec)
             

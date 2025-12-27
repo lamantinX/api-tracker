@@ -1,12 +1,10 @@
 """
-Async content fetcher using aiohttp
-Асинхронное получение контента с retry логикой
+Async content fetcher using aiohttp with retry logic
 """
 
 import asyncio
 from typing import Optional, List
 from dataclasses import dataclass
-
 import aiohttp
 
 from api_watcher.config import Config
@@ -15,36 +13,48 @@ from api_watcher.utils.usage_tracker import UsageTracker
 
 logger = get_logger(__name__)
 
+
 async def _read_text_limited(response: aiohttp.ClientResponse, max_bytes: int) -> str:
     """
-    Читает тело ответа с ограничением по размеру, чтобы не тащить огромные страницы в память.
-    Декодирует с учётом charset, заменяя ошибки.
+    Read response text with size limit
+    
+    Args:
+        response: aiohttp response
+        max_bytes: Maximum bytes to read
+        charset: Character encoding
+        
+    Returns:
+        Decoded text content
     """
-    # Быстрый отказ по Content-Length, если сервер его честно прислал
-    content_length = response.headers.get("Content-Length")
-    if content_length:
-        try:
-            if int(content_length) > max_bytes:
-                raise ValueError(f"Response too large: {content_length} bytes > {max_bytes}")
-        except ValueError:
-            # если Content-Length нечисловой — игнорируем и читаем потоково
-            pass
-
-    collected = bytearray()
-    async for chunk in response.content.iter_chunked(64 * 1024):
-        if not chunk:
-            continue
-        collected.extend(chunk)
-        if len(collected) > max_bytes:
-            raise ValueError(f"Response too large: read>{max_bytes} bytes")
-
-    charset = response.charset or "utf-8"
-    return collected.decode(charset, errors="replace")
+    try:
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                if int(content_length) > max_bytes:
+                    raise ValueError(f"Response too large: {{content_length}} bytes > {{max_bytes}}")
+            except ValueError:
+                pass
+        
+        collected = bytearray()
+        async for chunk in response.content.iter_chunked(64 * 1024):
+            if not chunk:
+                continue
+            collected.extend(chunk)
+            if len(collected) > max_bytes:
+                raise ValueError(f"Response too large: read {{len(collected)}} bytes > {{max_bytes}}")
+        
+        charset = response.charset or "utf-8"
+        return collected.decode(charset, errors="replace")
+    
+    except ValueError as e:
+        raise e
+    except Exception as e:
+        raise Exception(f"Failed to read response: {e}")
 
 
 @dataclass
 class FetchResult:
-    """Результат получения контента"""
+    """Result of a fetch operation"""
     content: Optional[str]
     status_code: int
     success: bool
@@ -67,7 +77,7 @@ RETRYABLE_EXCEPTIONS = (
 
 
 class AsyncFetcher:
-    """Асинхронный клиент для получения контента с retry"""
+    """Async HTTP fetcher with retry logic"""
     
     DEFAULT_TIMEOUT = 30
     DEFAULT_MAX_RETRIES = 3
@@ -80,7 +90,7 @@ class AsyncFetcher:
         user_agent: str = Config.USER_AGENT,
         max_retries: int = DEFAULT_MAX_RETRIES,
         retry_delay: float = DEFAULT_RETRY_DELAY,
-        retry_multiplier: float = DEFAULT_RETRY_MULTIPLIER
+        retry_multiplier: float = DEFAULT_RETRY_MULTIPLIER,
     ):
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.headers = {'User-Agent': user_agent}
@@ -90,31 +100,31 @@ class AsyncFetcher:
         self._session: Optional[aiohttp.ClientSession] = None
     
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Получает или создает сессию"""
+        """Get or create aiohttp session"""
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
                 timeout=self.timeout,
-                headers=self.headers
+                headers=self.headers,
             )
         return self._session
     
     def _is_retryable_status(self, status_code: int) -> bool:
-        """Проверяет, можно ли повторить запрос для данного статуса"""
+        """Check if HTTP status code is retryable"""
         return status_code in RETRYABLE_STATUS_CODES
     
     async def fetch(self, url: str, retry: bool = True) -> FetchResult:
         """
-        Асинхронно получает контент URL с retry логикой
+        Fetch URL content with retry logic
         
         Args:
-            url: URL для получения
-            retry: Включить retry при ошибках (default: True)
+            url: URL to fetch
+            retry: Enable retry on failures (default: True)
             
         Returns:
-            FetchResult с контентом или ошибкой
+            FetchResult with content and status
         """
         last_error: Optional[str] = None
-        last_status: int = 0
+        last_status = 0
         attempts = 0
         delay = self.retry_delay
         
@@ -129,7 +139,6 @@ class AsyncFetcher:
                         max_bytes = max(1, int(getattr(Config, "MAX_RESPONSE_BYTES", 2 * 1024 * 1024)))
                         content = await _read_text_limited(response, max_bytes=max_bytes)
                     except ValueError as e:
-                        # Не ретраим: это "логическая" ошибка/защита от чрезмерных ответов
                         logger.warning("response_too_large", url=url, error=str(e))
                         return FetchResult(
                             content=None,
@@ -210,24 +219,24 @@ class AsyncFetcher:
             success=False,
             error=last_error or "Max retries exceeded",
             url=url,
-            attempts=attempts
+            attempts=max_attempts
         )
     
     async def fetch_many(self, urls: List[str]) -> List[FetchResult]:
         """
-        Асинхронно получает контент нескольких URL
+        Fetch multiple URLs concurrently
         
         Args:
-            urls: Список URL
+            urls: List of URLs to fetch
             
         Returns:
-            Список FetchResult
+            List of FetchResults
         """
         tasks = [self.fetch(url) for url in urls]
         return await asyncio.gather(*tasks)
     
     async def close(self) -> None:
-        """Закрывает сессию"""
+        """Close aiohttp session"""
         if self._session and not self._session.closed:
             await self._session.close()
     
@@ -239,25 +248,25 @@ class AsyncFetcher:
 
 
 class AsyncZenRowsFetcher:
-    """Асинхронный клиент ZenRows с retry логикой"""
+    """Async HTTP fetcher with ZenRows proxy support"""
     
     BASE_URL = "https://api.zenrows.com/v1/"
     DEFAULT_MAX_RETRIES = 1
     DEFAULT_RETRY_DELAY = 2.0
     
     def __init__(
-        self, 
-        api_key: str, 
+        self,
+        api_key: str,
         timeout: int = 60,
         max_retries: int = DEFAULT_MAX_RETRIES,
         usage_tracker: Optional[UsageTracker] = None,
-        daily_request_limit: Optional[int] = None
+        daily_request_limit: Optional[int] = None,
     ):
         self.api_key = api_key
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.max_retries = max_retries
         self._session: Optional[aiohttp.ClientSession] = None
-        self.usage_tracker = usage_tracker or UsageTracker()
+        self._usage_tracker = usage_tracker or UsageTracker()
         self.daily_request_limit = (
             int(daily_request_limit)
             if daily_request_limit is not None
@@ -274,9 +283,20 @@ class AsyncZenRowsFetcher:
         url: str,
         js_render: bool = True,
         premium_proxy: bool = False,
-        antibot: bool = True
+        antibot: bool = True,
     ) -> FetchResult:
-        """Асинхронно получает контент через ZenRows с retry"""
+        """
+        Fetch URL using ZenRows proxy
+        
+        Args:
+            url: URL to fetch
+            js_render: Enable JavaScript rendering
+            premium_proxy: Use premium proxy
+            antibot: Enable antibot features
+            
+        Returns:
+            FetchResult with content and status
+        """
         params = {
             'apikey': self.api_key,
             'url': url,
@@ -295,13 +315,13 @@ class AsyncZenRowsFetcher:
         for attempt in range(self.max_retries):
             try:
                 session = await self._get_session()
-                # Предохранитель: ZenRows может сжигать бюджет при частом polling или ретраях
-                if not self.usage_tracker.can_use("zenrows", self.daily_request_limit):
+                # Check daily limit before making request
+                if not self._usage_tracker.can_use("zenrows", self.daily_request_limit):
                     logger.error(
-                        "zenrows_daily_limit_exceeded",
+                        "zenrows_disabled_due_to_daily_limit",
                         url=url,
                         limit=self.daily_request_limit,
-                        usage=self.usage_tracker.get_usage("zenrows")
+                        usage=self._usage_tracker.get_usage("zenrows")
                     )
                     return FetchResult(
                         content=None,
@@ -311,9 +331,9 @@ class AsyncZenRowsFetcher:
                         url=url,
                         attempts=attempt + 1
                     )
-
-                # Считаем каждый реальный вызов ZenRows (платный), даже если вернётся ошибка
-                self.usage_tracker.increment("zenrows", 1)
+                
+                # Track usage (increment before request to prevent race conditions)
+                self._usage_tracker.increment("zenrows", 1)
                 async with session.get(self.BASE_URL, params=params) as response:
                     try:
                         max_bytes = max(1, int(getattr(Config, "MAX_RESPONSE_BYTES", 2 * 1024 * 1024)))
@@ -328,12 +348,13 @@ class AsyncZenRowsFetcher:
                             url=url,
                             attempts=attempt + 1
                         )
+                    
                     success = response.status == 200
                     
                     # Circuit Breaker for Critical Errors
                     if response.status == 402:
                         logger.critical("zenrows_payment_required_aborting", url=url)
-                        raise Exception("ZenRows Payment Required (402) - Aborting to save funds")
+                        raise Exception("ZenRows Payment Required (402 - Aborting to save funds)")
                     
                     if response.status == 429:
                         logger.error("zenrows_rate_limit_aborting", url=url)
@@ -346,7 +367,7 @@ class AsyncZenRowsFetcher:
                             url=url,
                             attempts=attempt + 1
                         )
-
+                    
                     # Retry on 5xx errors
                     if response.status in {500, 502, 503, 504} and attempt < self.max_retries - 1:
                         logger.warning(
@@ -402,19 +423,39 @@ class AsyncZenRowsFetcher:
         )
     
     async def fetch_with_fallback(self, url: str) -> Optional[str]:
-        """Получает контент с fallback стратегией"""
-        # Попытка 1: базовые настройки
+        """
+        Fetch URL with ZenRows, fallback to direct fetch
+        
+        Args:
+            url: URL to fetch
+            
+        Returns:
+            Content or None
+        """
+        # Try ZenRows first (JS rendering, premium proxy for better success)
+        if not self._usage_tracker.can_use("zenrows", int(getattr(Config, "ZENROWS_DAILY_REQUEST_LIMIT", 2000))):
+            logger.error(
+                "zenrows_disabled_due_to_daily_limit",
+                url=url,
+                limit=getattr(Config, "ZENROWS_DAILY_REQUEST_LIMIT", 2000),
+                usage=self._usage_tracker.get_usage("zenrows")
+            )
+            result = await self._direct.fetch(url)
+            return result.content if result.success else None
+        
+        logger.info("fetching_via_zenrows", url=url)
         result = await self.fetch(url, js_render=True, premium_proxy=False)
         if result.success:
             return result.content
         
         logger.warning("zenrows_retry_no_js", url=url)
         
-        # Попытка 2: без JS
+        # Try without JS rendering (cheaper, faster)
         result = await self.fetch(url, js_render=False, premium_proxy=False)
         return result.content if result.success else None
     
     async def close(self) -> None:
+        """Close aiohttp session"""
         if self._session and not self._session.closed:
             await self._session.close()
     
@@ -427,8 +468,8 @@ class AsyncZenRowsFetcher:
 
 class ContentFetcher:
     """
-    Фасад для получения контента
-    Использует ZenRows если настроен, иначе прямой запрос
+    Content fetcher with ZenRows fallback
+    Uses direct fetch by default, ZenRows for difficult sites
     """
     
     def __init__(
@@ -436,19 +477,19 @@ class ContentFetcher:
         zenrows_api_key: Optional[str] = None,
         timeout: int = 30,
         user_agent: str = Config.USER_AGENT,
-        max_retries: int = 3
+        max_retries: int = 3,
     ):
         self._direct = AsyncFetcher(
-            timeout=timeout, 
+            timeout=timeout,
             user_agent=user_agent,
-            max_retries=max_retries
+            max_retries=max_retries,
         )
         self._zenrows: Optional[AsyncZenRowsFetcher] = None
         self._usage_tracker = UsageTracker()
         
         if zenrows_api_key:
             self._zenrows = AsyncZenRowsFetcher(
-                zenrows_api_key, 
+                zenrows_api_key,
                 timeout=60,
                 max_retries=max_retries,
                 usage_tracker=self._usage_tracker,
@@ -458,16 +499,16 @@ class ContentFetcher:
     
     async def fetch(self, url: str) -> Optional[str]:
         """
-        Получает контент URL
+        Fetch URL content
         
         Args:
-            url: URL для получения
+            url: URL to fetch
             
         Returns:
-            Контент или None
+            Content or None
         """
         if self._zenrows:
-            # Если дневной лимит исчерпан — не трогаем ZenRows, а пробуем прямой запрос
+            # Try ZenRows with fallback for difficult sites
             if not self._usage_tracker.can_use("zenrows", int(getattr(Config, "ZENROWS_DAILY_REQUEST_LIMIT", 2000))):
                 logger.error(
                     "zenrows_disabled_due_to_daily_limit",
@@ -477,9 +518,10 @@ class ContentFetcher:
                 )
                 result = await self._direct.fetch(url)
                 return result.content if result.success else None
-
+            
             logger.info("fetching_via_zenrows", url=url)
-            return await self._zenrows.fetch_with_fallback(url)
+            result = await self._zenrows.fetch_with_fallback(url)
+            return result.content if result.success else None
         else:
             logger.debug("fetching_direct", url=url)
             result = await self._direct.fetch(url)
@@ -487,20 +529,20 @@ class ContentFetcher:
     
     async def fetch_many(self, urls: List[str]) -> dict[str, Optional[str]]:
         """
-        Получает контент нескольких URL параллельно
+        Fetch multiple URLs
         
         Args:
-            urls: Список URL
+            urls: List of URLs to fetch
             
         Returns:
-            Словарь {url: content}
+            Dict of {url: content}
         """
         tasks = [self.fetch(url) for url in urls]
         results = await asyncio.gather(*tasks)
         return dict(zip(urls, results))
     
     async def close(self) -> None:
-        """Закрывает все соединения"""
+        """Close all sessions"""
         await self._direct.close()
         if self._zenrows:
             await self._zenrows.close()
