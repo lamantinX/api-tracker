@@ -2,6 +2,14 @@
 
 ## Проблема: api-watcher.service падает с exit-code 1
 
+### Быстрое решение для ошибки "No module named 'structlog'"
+
+```bash
+cd /opt/api-tracker
+chmod +x install_dependencies.sh
+bash install_dependencies.sh
+```
+
 ### Быстрая диагностика
 
 1. **Скопируйте файлы диагностики на сервер:**
@@ -11,17 +19,24 @@
 # - quick_debug.sh  
 # - fix_service.sh
 # - test_watcher.py
+# - install_dependencies.sh
 # - deployment/api-watcher-fixed.service
 ```
 
-2. **Запустите быструю диагностику:**
+2. **Установите недостающие зависимости:**
 ```bash
 cd /opt/api-tracker
+chmod +x install_dependencies.sh
+bash install_dependencies.sh
+```
+
+3. **Запустите быструю диагностику:**
+```bash
 chmod +x quick_debug.sh
 sudo bash quick_debug.sh
 ```
 
-3. **Запустите полную диагностику:**
+4. **Запустите полную диагностику:**
 ```bash
 chmod +x debug_service.sh
 sudo bash debug_service.sh
@@ -116,7 +131,32 @@ sudo tail -f /var/log/api-watcher/watcher.error.log
 
 ### Частые проблемы и решения
 
-#### 1. ModuleNotFoundError
+#### 1. ModuleNotFoundError: No module named 'structlog'
+```bash
+# Установите недостающие зависимости
+cd /opt/api-tracker
+bash install_dependencies.sh
+
+# Или вручную:
+source venv/bin/activate
+pip install -r api_watcher/requirements.txt
+```
+
+#### 2. ModuleNotFoundError (другие модули)
+```bash
+# Убедитесь, что PYTHONPATH установлен
+export PYTHONPATH=/opt/api-tracker
+
+# Проверьте установку зависимостей
+cd /opt/api-tracker
+source venv/bin/activate
+pip install -r api_watcher/requirements.txt
+
+# Проверьте версии
+pip list | grep -E "(structlog|aiohttp|sqlalchemy|requests)"
+```
+
+#### 3. Permission denied
 ```bash
 # Убедитесь, что PYTHONPATH установлен
 export PYTHONPATH=/opt/api-tracker

@@ -103,15 +103,66 @@ class ChangeDetector:
         logger.info("comparing_openapi", url=url)
         
         try:
+            # Helper function to check if content is HTML
+            def is_html_content(content: str) -> bool:
+                """Check if content appears to be HTML rather than JSON/YAML"""
+                if not content or not content.strip():
+                    return False
+                
+                content_lower = content.strip().lower()
+                # Check for common HTML indicators
+                html_indicators = [
+                    '<!doctype html',
+                    '<html',
+                    '<meta charset',
+                    '<title>',
+                    '<body>',
+                    '<head>',
+                    '\t<meta charset',  # Табуляция перед meta (как в ошибке)
+                    '    <meta charset'  # Пробелы перед meta
+                ]
+                
+                # Проверяем начало контента
+                if any(indicator in content_lower for indicator in html_indicators):
+                    return True
+                
+                # Проверяем первые несколько строк
+                lines = content.strip().split('\n')[:5]
+                for line in lines:
+                    line_lower = line.strip().lower()
+                    if line_lower.startswith(('<', '\t<', '    <')) and any(tag in line_lower for tag in ['html', 'meta', 'title', 'head', 'body']):
+                        return True
+                
+                return False
+            
             # Parse old spec
             if old_snapshot.structured_data:
                 old_spec = json.loads(old_snapshot.structured_data)
             else:
+                # Check if old content is HTML instead of API spec
+                if is_html_content(old_snapshot.raw_html):
+                    logger.warning("old_snapshot_is_html_not_openapi", url=url)
+                    # Try to extract JSON/YAML from HTML or skip comparison
+                    return {
+                        'url': url, 
+                        'has_changes': False,
+                        'error': 'Old snapshot contains HTML instead of OpenAPI specification'
+                    }
+                
                 # Try JSON first, then YAML
                 try:
                     old_spec = json.loads(old_snapshot.raw_html)
                 except (json.JSONDecodeError, ValueError):
                     old_spec = yaml.safe_load(old_snapshot.raw_html)
+            
+            # Check if new content is HTML instead of API spec
+            if is_html_content(new_html):
+                logger.warning("new_content_is_html_not_openapi", url=url)
+                return {
+                    'url': url, 
+                    'has_changes': False,
+                    'error': 'New content contains HTML instead of OpenAPI specification'
+                }
             
             # Parse new spec
             try:

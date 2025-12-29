@@ -43,8 +43,31 @@ class OpenAPIParser:
         content_type = response.headers.get('content-type', '').lower()
         
         # Проверяем, что это не HTML
-        if 'text/html' in content_type or response.text.strip().startswith(('<html', '<!DOCTYPE', '<!doctype')):
+        response_preview = response.text[:500].strip().lower()
+        html_indicators = [
+            'text/html',
+            '<!doctype html',
+            '<html',
+            '<meta charset',
+            '<title>',
+            '<body>',
+            '<head>',
+            '\t<meta charset'  # Добавляем проверку на табуляцию перед meta
+        ]
+        
+        if ('text/html' in content_type or 
+            response.text.strip().startswith(('<html', '<!DOCTYPE', '<!doctype')) or
+            any(indicator in response_preview for indicator in html_indicators)):
             raise Exception(f"Сервер вернул HTML вместо JSON/YAML для {url}. Content-Type: {content_type}")
+        
+        # Дополнительная проверка на HTML теги в начале контента
+        first_line = response.text.strip().split('\n')[0].strip().lower()
+        if first_line.startswith(('<', '\t<')) and any(tag in first_line for tag in ['html', 'meta', 'title', 'head', 'body']):
+            raise Exception(f"Обнаружен HTML контент в ответе для {url}")
+        
+        # Проверяем на пустой или почти пустой ответ
+        if len(response.text.strip()) < 10:
+            raise Exception(f"Сервер вернул слишком короткий ответ для {url}: '{response.text[:50]}'")
         
         try:
             if 'yaml' in content_type or url.endswith(('.yml', '.yaml')):
@@ -59,7 +82,8 @@ class OpenAPIParser:
             preview = response.text[:200].strip()
             raise Exception(f"Ошибка парсинга YAML: {str(e)}. Начало ответа: {preview}")
         except Exception as e:
-            raise Exception(f"Неожиданная ошибка при парсинге ответа: {str(e)}")
+            preview = response.text[:200].strip()
+            raise Exception(f"Неожиданная ошибка при парсинге ответа: {str(e)}. Начало ответа: {preview}")
         
         return self._extract_api_info(spec, url, method_filter)
 

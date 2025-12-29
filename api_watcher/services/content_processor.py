@@ -170,6 +170,11 @@ class ContentProcessor:
         if 'openapi' in url.lower() or 'swagger' in url.lower():
             return 'openapi'
         
+        # Check if content is empty or too short
+        if not content or len(content.strip()) < 10:
+            logger.warning("content_too_short_defaulting_to_html", url=url, length=len(content))
+            return 'html'
+        
         try:
             stripped = content.lstrip()
             looks_like_json = bool(stripped) and stripped[0] in ['{', '[']
@@ -181,7 +186,18 @@ class ContentProcessor:
             if 'openapi' in data or 'swagger' in data:
                 return 'openapi'
             return 'json'
-        except:
+        except json.JSONDecodeError:
+            # Check if it looks like HTML
+            content_lower = content[:500].lower()
+            if ('<html' in content_lower or 
+                '<!doctype' in content_lower or 
+                '<head>' in content_lower or 
+                '<body>' in content_lower):
+                return 'html'
+            # Default to html for unparseable content
+            return 'html'
+        except Exception as e:
+            logger.warning("content_type_detection_error", url=url, error=str(e))
             return 'html'
 
     async def try_find_new_documentation(

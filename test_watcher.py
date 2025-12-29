@@ -14,13 +14,34 @@ def test_imports():
     """Тестирует импорт основных модулей"""
     print("=== Тест импорта модулей ===")
     
-    try:
-        import asyncio
-        print("✅ asyncio")
-    except ImportError as e:
-        print(f"❌ asyncio: {e}")
+    # Список критически важных модулей
+    critical_modules = [
+        ('asyncio', 'asyncio'),
+        ('aiohttp', 'aiohttp'),
+        ('sqlalchemy', 'sqlalchemy'),
+        ('structlog', 'structlog'),
+        ('requests', 'requests'),
+        ('beautifulsoup4', 'bs4'),
+        ('python-dotenv', 'dotenv')
+    ]
+    
+    failed_modules = []
+    
+    for package_name, import_name in critical_modules:
+        try:
+            __import__(import_name)
+            print(f"✅ {package_name}")
+        except ImportError as e:
+            print(f"❌ {package_name}: {e}")
+            failed_modules.append(package_name)
+    
+    if failed_modules:
+        print(f"\n❌ Отсутствующие модули: {', '.join(failed_modules)}")
+        print("Установите их командой:")
+        print("cd /opt/api-tracker && ./venv/bin/pip install -r api_watcher/requirements.txt")
         return False
     
+    # Тестируем импорт модулей проекта
     try:
         from api_watcher.config import Config
         print("✅ Config")

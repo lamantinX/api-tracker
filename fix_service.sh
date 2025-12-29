@@ -23,7 +23,7 @@ chown -R apiwatcher:apiwatcher /opt/api-tracker
 chown -R apiwatcher:apiwatcher /var/log/api-watcher
 echo "✅ Директории созданы и права установлены"
 
-echo -e "\n3. Проверка виртуального окружения..."
+echo -e "\n3. Проверка и установка зависимостей Python..."
 if [ ! -f /opt/api-tracker/venv/bin/python ]; then
     echo "❌ Виртуальное окружение не найдено в /opt/api-tracker/venv/"
     echo "Создайте его командой:"
@@ -31,6 +31,19 @@ if [ ! -f /opt/api-tracker/venv/bin/python ]; then
     exit 1
 else
     echo "✅ Виртуальное окружение найдено"
+    
+    # Проверяем и устанавливаем недостающие зависимости
+    echo "Проверяем зависимости..."
+    cd /opt/api-tracker
+    
+    # Проверяем structlog
+    if ! /opt/api-tracker/venv/bin/python -c "import structlog" 2>/dev/null; then
+        echo "⚠️ structlog не найден, устанавливаем зависимости..."
+        /opt/api-tracker/venv/bin/pip install -r api_watcher/requirements.txt
+        echo "✅ Зависимости установлены"
+    else
+        echo "✅ Основные зависимости найдены"
+    fi
 fi
 
 echo -e "\n4. Проверка основных файлов..."
